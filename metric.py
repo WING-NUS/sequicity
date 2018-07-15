@@ -252,15 +252,15 @@ class CamRestEvaluator(GenericEvaluator):
         for dial_id in dials:
             truth_req, gen_req = [], []
             dial = dials[dial_id]
-            gen_latent, truth_cons, gen_cons = None, None, set()
+            gen_bpsan, truth_cons, gen_cons = None, None, set()
             truth_turn_num = -1
             truth_response_req = []
             for turn_num,turn in enumerate(dial):
                 if 'SLOT' in turn['generated_response']:
-                    gen_latent = turn['generated_latent']
-                    gen_cons = self._extract_constraint(gen_latent)
+                    gen_bpsan = turn['generated_bpsan']
+                    gen_cons = self._extract_constraint(gen_bpsan)
                 if 'SLOT' in turn['response']:
-                    truth_cons = self._extract_constraint(turn['latent'])
+                    truth_cons = self._extract_constraint(turn['bpsan'])
                 gen_response_token = turn['generated_response'].split()
                 response_token = turn['response'].split()
                 for idx, w in enumerate(gen_response_token):
@@ -272,8 +272,8 @@ class CamRestEvaluator(GenericEvaluator):
                     if w.endswith('SLOT') and w != 'SLOT':
                         truth_response_req.append(w.split('_')[0])
             if not gen_cons:
-                gen_latent = dial[-1]['generated_latent']
-                gen_cons = self._extract_constraint(gen_latent)
+                gen_bpsan = dial[-1]['generated_bpsan']
+                gen_cons = self._extract_constraint(gen_bpsan)
             if truth_cons:
                 if gen_cons == truth_cons:
                     match += 1
@@ -413,30 +413,30 @@ class KvretEvaluator(GenericEvaluator):
         self.entity_dict = entity_dict
 
     @report
-    def match_rate_metric(self, data, sub='match',latents='./data/kvret/test.latent.pkl'):
+    def match_rate_metric(self, data, sub='match',bpsans='./data/kvret/test.bpsan.pkl'):
         dials = self.pack_dial(data)
         match,total = 0,1e-8
-        latent_data = pickle.load(open(latents,'rb'))
+        bpsan_data = pickle.load(open(bpsans,'rb'))
         # find out the last placeholder and see whether that is correct
         # if no such placeholder, see the final turn, because it can be a yes/no question or scheduling conversation
         for dial_id in dials:
             dial = dials[dial_id]
-            gen_latent, truth_cons, gen_cons = None, None, set()
+            gen_bpsan, truth_cons, gen_cons = None, None, set()
             truth_turn_num = -1
             for turn_num,turn in enumerate(dial):
                 if 'SLOT' in turn['generated_response']:
-                    gen_latent = turn['generated_latent']
-                    gen_cons = self._extract_constraint(gen_latent)
+                    gen_bpsan = turn['generated_bpsan']
+                    gen_cons = self._extract_constraint(gen_bpsan)
                 if 'SLOT' in turn['response']:
-                    truth_cons = self._extract_constraint(turn['latent'])
+                    truth_cons = self._extract_constraint(turn['bpsan'])
 
             # KVRET dataset includes "scheduling" (so often no SLOT decoded in ground truth)
             if not truth_cons:
-                truth_latent = dial[-1]['latent']
-                truth_cons = self._extract_constraint(truth_latent)
+                truth_bpsan = dial[-1]['bpsan']
+                truth_cons = self._extract_constraint(truth_bpsan)
             if not gen_cons:
-                gen_latent = dial[-1]['generated_latent']
-                gen_cons = self._extract_constraint(gen_latent)
+                gen_bpsan = dial[-1]['generated_bpsan']
+                gen_cons = self._extract_constraint(gen_bpsan)
 
             if truth_cons:
                 if self.constraint_same(gen_cons, truth_cons):
@@ -488,108 +488,6 @@ class KvretEvaluator(GenericEvaluator):
         return f1
 
 
-class KvretKVRNEvaluator(KvretEvaluator):
-    def __init__(self, result_path):
-        super().__init__(result_path)
-
-    def run_metrics(self):
-        data = self.read_result_data()
-        for i, row in enumerate(data):
-            data[i]['response'] = self.clean_by_intent(data[i]['response'],int(data[i]['dial_id']))
-            data[i]['generated_response'] = self.clean_by_intent(data[i]['generated_response'],int(data[i]['dial_id']))
-        bleu_score = self.bleu_metric(data,'bleu')
-        match_rate = self.match_rate_metric(data,'match')
-        f1 = self.success_f1_metric(data,'successf1')
-        self._print_dict(self.metric_dict)
-
-    def _extract_user_constraint(self, gen_r):
-        cons = set()
-        gen_r = gen_r.split()
-        for item in gen_r:
-            if item.startswith('$'):
-                item = item[1:-1].split('_')
-                for w in item:
-                    if w:
-                        cons.add(w)
-        reqs = ['address', 'traffic', 'poi', 'poi_type', 'distance', 'weather', 'temperature', 'weather_attribute',
-                'date', 'time', 'location', 'event', 'agenda', 'party', 'room', 'weekly_time', 'forecast']
-        junk = ['good','great','quickest','shortest','route','week','fastest','nearest','next',
-                'closest','way','mile','<unk>']
-        return cons.difference(reqs).difference(en_sws).difference(junk)
-
-    def _extract_user_request(self, gen_r):
-        res = set()
-        gen_r = gen_r.split()
-        reqs = ['address', 'traffic', 'poi', 'poi_type', 'distance', 'weather', 'temperature', 'weather_attribute',
-                'date', 'time', 'location', 'event', 'agenda', 'party', 'room', 'weekly_time', 'forecast']
-        for item in gen_r:
-            if item.startswith('$'):
-                for req in reqs:
-                    if req in item:
-                        if req == 'poi':
-                            if 'poi_type' in req:
-                                res.add('poi_type')
-                            else:
-                                res.add(req)
-                        else:
-                            res.add(req)
-        return res
-
-
-    @report
-    def match_rate_metric(self, data, sub='match',latents='./data/kvret/test.latent.pkl'):
-        dials = self.pack_dial(data)
-        match,total = 0,1e-8
-        latent_data = pickle.load(open(latents,'rb'))
-        # find out the last placeholder and see whether that is correct
-        # if no such placeholder, see the final turn, because it can be a yes/no question or scheduling dialogue
-        for dial_id in dials:
-            dial = dials[dial_id]
-            truth_cons, gen_cons = None, None
-            for turn_num,turn in enumerate(dial):
-                if '$' in turn['generated_response']:
-                    gen_cons = self._extract_user_constraint(turn['generated_response'])
-                if '$' in turn['response']:
-                    truth_cons = self._extract_user_constraint(turn['response'])
-            if truth_cons:
-                if gen_cons == truth_cons:
-                    match += 1
-                else:
-                    print(gen_cons, truth_cons)
-                total += 1
-        return match / total
-
-    @report
-    def success_f1_metric(self, data, sub='successf1'):
-        dials = self.pack_dial(data)
-        tp,fp,fn = 0,0,0
-        for dial_id in dials:
-            truth_req, gen_req = set(),set()
-            dial = dials[dial_id]
-            for turn_num, turn in enumerate(dial):
-                if '$' in turn['generated_response']:
-                    g = self._extract_user_request(turn['generated_response'])
-                    gen_req.update(g)
-                if '$' in turn['response']:
-                    t = self._extract_user_request(turn['response'])
-                    truth_req.update(t)
-            for req in gen_req:
-                if req in truth_req:
-                    tp += 1
-                else:
-                    fp += 1
-            for req in truth_req:
-                if req not in gen_req:
-                    fn += 1
-        precision, recall = tp / (tp + fp + 1e-8), tp / (tp + fn + 1e-8)
-        f1 = 2 * precision * recall / (precision + recall + 1e-8)
-        return f1
-
-
-class UbuntuEvaluator:
-    def __init__(self, ):
-        pass
-
 def metric_handler():
     parser = argparse.ArgumentParser()
     parser.add_argument('-file')
@@ -600,8 +498,6 @@ def metric_handler():
         ev_class = CamRestEvaluator
     elif args.type == 'kvret':
         ev_class = KvretEvaluator
-    elif args.type == 'kvretkvrn':
-        ev_class = KvretKVRNEvaluator
     ev = ev_class(args.file)
     ev.run_metrics()
     ev.dump()
