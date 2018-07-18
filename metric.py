@@ -252,15 +252,15 @@ class CamRestEvaluator(GenericEvaluator):
         for dial_id in dials:
             truth_req, gen_req = [], []
             dial = dials[dial_id]
-            gen_bpsan, truth_cons, gen_cons = None, None, set()
+            gen_bspan, truth_cons, gen_cons = None, None, set()
             truth_turn_num = -1
             truth_response_req = []
             for turn_num,turn in enumerate(dial):
                 if 'SLOT' in turn['generated_response']:
-                    gen_bpsan = turn['generated_bpsan']
-                    gen_cons = self._extract_constraint(gen_bpsan)
+                    gen_bspan = turn['generated_bspan']
+                    gen_cons = self._extract_constraint(gen_bspan)
                 if 'SLOT' in turn['response']:
-                    truth_cons = self._extract_constraint(turn['bpsan'])
+                    truth_cons = self._extract_constraint(turn['bspan'])
                 gen_response_token = turn['generated_response'].split()
                 response_token = turn['response'].split()
                 for idx, w in enumerate(gen_response_token):
@@ -272,8 +272,8 @@ class CamRestEvaluator(GenericEvaluator):
                     if w.endswith('SLOT') and w != 'SLOT':
                         truth_response_req.append(w.split('_')[0])
             if not gen_cons:
-                gen_bpsan = dial[-1]['generated_bpsan']
-                gen_cons = self._extract_constraint(gen_bpsan)
+                gen_bspan = dial[-1]['generated_bspan']
+                gen_cons = self._extract_constraint(gen_bspan)
             if truth_cons:
                 if gen_cons == truth_cons:
                     match += 1
@@ -413,30 +413,30 @@ class KvretEvaluator(GenericEvaluator):
         self.entity_dict = entity_dict
 
     @report
-    def match_rate_metric(self, data, sub='match',bpsans='./data/kvret/test.bpsan.pkl'):
+    def match_rate_metric(self, data, sub='match',bspans='./data/kvret/test.bspan.pkl'):
         dials = self.pack_dial(data)
         match,total = 0,1e-8
-        bpsan_data = pickle.load(open(bpsans,'rb'))
+        bspan_data = pickle.load(open(bspans,'rb'))
         # find out the last placeholder and see whether that is correct
         # if no such placeholder, see the final turn, because it can be a yes/no question or scheduling conversation
         for dial_id in dials:
             dial = dials[dial_id]
-            gen_bpsan, truth_cons, gen_cons = None, None, set()
+            gen_bspan, truth_cons, gen_cons = None, None, set()
             truth_turn_num = -1
             for turn_num,turn in enumerate(dial):
                 if 'SLOT' in turn['generated_response']:
-                    gen_bpsan = turn['generated_bpsan']
-                    gen_cons = self._extract_constraint(gen_bpsan)
+                    gen_bspan = turn['generated_bspan']
+                    gen_cons = self._extract_constraint(gen_bspan)
                 if 'SLOT' in turn['response']:
-                    truth_cons = self._extract_constraint(turn['bpsan'])
+                    truth_cons = self._extract_constraint(turn['bspan'])
 
             # KVRET dataset includes "scheduling" (so often no SLOT decoded in ground truth)
             if not truth_cons:
-                truth_bpsan = dial[-1]['bpsan']
-                truth_cons = self._extract_constraint(truth_bpsan)
+                truth_bspan = dial[-1]['bspan']
+                truth_cons = self._extract_constraint(truth_bspan)
             if not gen_cons:
-                gen_bpsan = dial[-1]['generated_bpsan']
-                gen_cons = self._extract_constraint(gen_bpsan)
+                gen_bspan = dial[-1]['generated_bspan']
+                gen_cons = self._extract_constraint(gen_bspan)
 
             if truth_cons:
                 if self.constraint_same(gen_cons, truth_cons):
