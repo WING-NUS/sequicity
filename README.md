@@ -34,7 +34,7 @@ python model.py -mode test -model [tsdf-camrest|tsdf-kvret]
 ## Reinforcement fine-tuning
 
 ```
-python model.py -mode rl -mode [tsdf-camrest|tsdf-kvret] -cfg lr=0.0001
+python model.py -mode rl -model [tsdf-camrest|tsdf-kvret] -cfg lr=0.0001
 ```
 
 ## Before running
