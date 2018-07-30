@@ -22,7 +22,7 @@ python model.py -mode train -model [tsdf-camrest|tsdf-kvret]
 (optional: configuring hyperparameters with cmdline)
 
 ```
-python model.py -mode train -model [tsdf-camrest|tsdf-kvret] -config lr=0.003 batch_size=32
+python model.py -mode train -model [tsdf-camrest|tsdf-kvret] -cfg lr=0.003 batch_size=32
 ```
 
 ## Testing
@@ -34,7 +34,7 @@ python model.py -mode test -model [tsdf-camrest|tsdf-kvret]
 ## Reinforcement fine-tuning
 
 ```
-python model.py -mode train -mode [tsdf-camrest|tsdf-kvret] -config lr=0.0001
+python model.py -mode rl -mode [tsdf-camrest|tsdf-kvret] -cfg lr=0.0001
 ```
 
 ## Before running
