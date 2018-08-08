@@ -43,7 +43,7 @@ class _Config:
         self.dropout_rate = 0.5
         self.epoch_num = 100 # triggered by early stop
         self.rl_epoch_num = 2
-        self.cuda = False
+        self.cuda = True
         self.spv_proportion = 100
         self.max_ts = 40
         self.early_stop_count = 3
@@ -80,7 +80,7 @@ class _Config:
         self.layer_num = 1
         self.dropout_rate = 0.5
         self.epoch_num = 100
-        self.cuda = False
+        self.cuda = True
         self.spv_proportion = 100
         self.alpha = 0.0
         self.max_ts = 40
