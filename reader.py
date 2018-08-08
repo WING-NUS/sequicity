@@ -271,7 +271,7 @@ class _ReaderBase:
     def db_search(self, constraints):
         raise NotImplementedError('This is an abstract method')
 
-    def db_degree_handler(self, z_samples):
+    def db_degree_handler(self, z_samples, *args, **kwargs):
         """
         returns degree of database searching and it may be used to control further decoding.
         One hot vector, indicating the number of entries found: [0, 1, 2, 3, 4, >=5]
@@ -283,7 +283,8 @@ class _ReaderBase:
         for cons_idx_list in z_samples:
             constraints = set()
             for cons in cons_idx_list:
-                cons = self.vocab.decode(cons)
+                if type(cons) is not str:
+                    cons = self.vocab.decode(cons)
                 if cons == 'EOS_Z1':
                     break
                 constraints.add(cons)
@@ -305,7 +306,6 @@ class CamRest676Reader(_ReaderBase):
         super().__init__()
         self._construct(cfg.data, cfg.db)
         self.result_file = ''
-        self.db = []
 
     def _get_tokenized_data(self, raw_data, db_data, construct_vocab):
         tokenized_data = []
@@ -464,6 +464,7 @@ class KvretReader(_ReaderBase):
         self.abbr_dict = {}
 
         self.wn = WordNetLemmatizer()
+        self.db = {}
 
         self.tokenized_data_path = './data/kvret/'
         self._construct(cfg.train, cfg.dev, cfg.test, cfg.entity)
@@ -501,7 +502,6 @@ class KvretReader(_ReaderBase):
         f = open(path,'w')
         json.dump(data,f,indent=2)
         f.close()
-
 
     def _load_tokenized_data(self, filename):
         '''
@@ -668,7 +668,8 @@ class KvretReader(_ReaderBase):
                     single_turn['requested'] = requests + ['EOS_Z2']
                     single_turn['turn_num'] = len(tokenized_dial)
                     single_turn['dial_id'] = dial_id
-                    single_turn['degree'] = self.db_degree(constraints, dial_turn['scenario']['kb']['items'])
+                    single_turn['degree'] = self.db_degree(constraints, raw_dial['scenario']['kb']['items'])
+                    self.db[dial_id] = raw_dial['scenario']['kb']['items']
                     if 'user' in single_turn:
                         state_dump[(dial_id, len(tokenized_dial))]['constraint'] = constraint_dict
                         state_dump[(dial_id, len(tokenized_dial))]['request'] = requests
@@ -724,15 +725,31 @@ class KvretReader(_ReaderBase):
 
     def db_degree(self, constraints, items):
         cnt = 0
-        for item in items:
-            flg = True
-            for c in constraints:
-                if c not in item:
-                    flg = False
-                    break
-            if flg:
-                cnt += 1
+        if items is not None:
+            for item in items:
+                flg = True
+                for c in constraints:
+                    if c not in item:
+                        flg = False
+                        break
+                if flg:
+                    cnt += 1
         return cnt
+
+    def db_degree_handler(self, z_samples, idx=None, *args, **kwargs):
+        control_vec = []
+        for i,cons_idx_list in enumerate(z_samples):
+            constraints = set()
+            for cons in cons_idx_list:
+                if type(cons) is not str:
+                    cons = self.vocab.decode(cons)
+                if cons == 'EOS_Z1':
+                    break
+                constraints.add(cons)
+            items = self.db[idx[i]]
+            degree = self.db_degree(constraints, items)
+            control_vec.append(self._degree_vec_mapping(degree))
+        return np.array(control_vec)
 
 
 def pad_sequences(sequences, maxlen=None, dtype='int32',
@@ -818,3 +835,4 @@ def get_glove_matrix(vocab, initial_embedding_np):
     logging.info('%d known embedding. old mean: %f new mean %f, old std %f new std %f' % (cnt, old_avg,
                                                                                           new_avg, old_std, new_std))
     return vec_array
+
