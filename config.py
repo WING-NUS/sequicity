@@ -80,7 +80,7 @@ class _Config:
         self.layer_num = 1
         self.dropout_rate = 0.5
         self.epoch_num = 100
-        self.cuda = True
+        self.cuda = False
         self.spv_proportion = 100
         self.alpha = 0.0
         self.max_ts = 40
