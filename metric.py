@@ -416,7 +416,7 @@ class KvretEvaluator(GenericEvaluator):
     def match_rate_metric(self, data, sub='match',bspans='./data/kvret/test.bspan.pkl'):
         dials = self.pack_dial(data)
         match,total = 0,1e-8
-        bspan_data = pickle.load(open(bspans,'rb'))
+        #bspan_data = pickle.load(open(bspans,'rb'))
         # find out the last placeholder and see whether that is correct
         # if no such placeholder, see the final turn, because it can be a yes/no question or scheduling conversation
         for dial_id in dials:
