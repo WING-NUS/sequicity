@@ -140,15 +140,15 @@ class BSpanDecoder(nn.Module):
             context = self.attn_u(last_hidden, u_enc_out)
         embed_z = self.emb(z_tm1)
         #embed_z = F.dropout(embed_z, self.dropout_rate)
-        embed_z = self.inp_dropout(embed_z)
+        #embed_z = self.inp_dropout(embed_z)
 
         gru_in = torch.cat([embed_z, context], 2)
         gru_out, last_hidden = self.gru(gru_in, last_hidden)
         #gru_out = F.dropout(gru_out, self.dropout_rate)
-        gru_out = self.inp_dropout(gru_out)
+        #gru_out = self.inp_dropout(gru_out)
         gen_score = self.proj(torch.cat([gru_out, context], 2)).squeeze(0)
         #gen_score = F.dropout(gen_score, self.dropout_rate)
-        gen_score = self.inp_dropout(gen_score)
+        #gen_score = self.inp_dropout(gen_score)
         u_copy_score = F.tanh(self.proj_copy1(u_enc_out.transpose(0, 1)))  # [B,T,H]
         # stable version of copynet
         u_copy_score = torch.matmul(u_copy_score, gru_out.squeeze(0).unsqueeze(2)).squeeze(2)
@@ -160,7 +160,7 @@ class BSpanDecoder(nn.Module):
         u_copy_score = cuda_(u_copy_score)
         if pv_z_enc_out is None:
             #u_copy_score = F.dropout(u_copy_score, self.dropout_rate)
-            u_copy_score = self.inp_dropout(u_copy_score)
+            #u_copy_score = self.inp_dropout(u_copy_score)
             scores = F.softmax(torch.cat([gen_score, u_copy_score], dim=1), dim=1)
             gen_score, u_copy_score = scores[:, :cfg.vocab_size], \
                                       scores[:, cfg.vocab_size:]

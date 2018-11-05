@@ -1,0 +1,7 @@
+log/
+models/
+results/
+sheets/
+vocab/
+data/
+.idea/

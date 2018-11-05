@@ -529,7 +529,7 @@ class KvretReader(_ReaderBase):
         response = self._lemmatize(self._tokenize(response))
         requestable = {
             'weather': ['weather_attribute'],
-            'navigate': ['poi', 'traffic', 'address', 'distance'],
+            'navigate': ['poi', 'traffic_info', 'address', 'distance'],
             'schedule': ['event', 'date', 'time', 'party', 'agenda', 'room']
         }
         reqs = set()
@@ -546,7 +546,7 @@ class KvretReader(_ReaderBase):
             if lm1 == lm2 and lm1 not in prev_user_input and v not in prev_user_input:
                 response = clean_replace(response, response[start_idx:end_idx], k + '_SLOT')
                 reqs.add(k)
-        return response,k
+        return response,reqs
 
     def _clean_constraint_dict(self, constraint_dict, intent, prefer='short'):
         """
