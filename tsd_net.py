@@ -669,7 +669,8 @@ class TSD(nn.Module):
             rewards.insert(0, R)
 
         rewards = torch.Tensor(rewards)
-        rewards = (rewards - rewards.mean()) / (rewards.std() + np.finfo(np.float32).eps)
+        # update: we notice improved performance without reward normalization
+        # rewards = (rewards - rewards.mean()) / (rewards.std() + np.finfo(np.float32).eps)
 
         for log_prob, reward in zip(log_probas, rewards):
             policy_loss.append(-log_prob * reward)

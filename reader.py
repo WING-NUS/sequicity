@@ -726,7 +726,7 @@ class KvretReader(_ReaderBase):
     def db_degree(self, constraints, items):
         cnt = 0
         if items is not None:
-            for item in items:
+            for item in items.values():
                 flg = True
                 for c in constraints:
                     if c not in item:
