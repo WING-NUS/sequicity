@@ -730,7 +730,8 @@ class KvretReader(_ReaderBase):
                 item = item.values()
                 flg = True
                 for c in constraints:
-                    if c not in item:
+                    itemvaluestr = " ".join(list(item))
+                    if c not in itemvaluestr:
                         flg = False
                         break
                 if flg:
