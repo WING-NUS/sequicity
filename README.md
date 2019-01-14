@@ -17,12 +17,13 @@ Architectures" by Wenqiang Lei et al.
 
 ```
 python model.py -mode train -model [tsdf-camrest|tsdf-kvret]
+python model.py -mode adjust -model [tsdf-camrest|tsdf-kvret] -c lr=0.0003
 ```
 
 (optional: configuring hyperparameters with cmdline)
 
 ```
-python model.py -mode train -model [tsdf-camrest|tsdf-kvret] -cfg lr=0.003 batch_size=32
+python model.py -mode train -model [tsdf-camrest|tsdf-kvret] -c lr=0.003 batch_size=32
 ```
 
 ## Testing
@@ -34,7 +35,7 @@ python model.py -mode test -model [tsdf-camrest|tsdf-kvret]
 ## Reinforcement fine-tuning
 
 ```
-python model.py -mode rl -model [tsdf-camrest|tsdf-kvret] -cfg lr=0.0001
+python model.py -mode rl -model [tsdf-camrest|tsdf-kvret] -c lr=0.0001
 ```
 
 ## Before running
