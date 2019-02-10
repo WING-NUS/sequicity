@@ -45,6 +45,8 @@ def setsim(a,b):
     a,b = set(a),set(b)
     return setsub(a,b) and setsub(b,a)
 
+
+
 class BLEUScorer(object):
     ## BLEU score calculator via GentScorer interface
     ## it calculates the BLEU-4 by taking the entire corpus in
@@ -277,8 +279,7 @@ class CamRestEvaluator(GenericEvaluator):
             if truth_cons:
                 if gen_cons == truth_cons:
                     match += 1
-                else:
-                    print(gen_cons, truth_cons)
+              
                 total += 1
 
         return match / total, success / total
@@ -312,7 +313,7 @@ class CamRestEvaluator(GenericEvaluator):
                     fn += 1
         precision, recall = tp / (tp + fp + 1e-8), tp / (tp + fn + 1e-8)
         f1 = 2 * precision * recall / (precision + recall + 1e-8)
-        return f1, precision, recall
+        return f1
 
 class KvretEvaluator(GenericEvaluator):
     def __init__(self, result_path):
@@ -442,8 +443,8 @@ class KvretEvaluator(GenericEvaluator):
                 if self.constraint_same(gen_cons, truth_cons):
                     match += 1
                     #print(gen_cons, truth_cons, '+')
-                else:
-                    print(gen_cons, truth_cons, '-')
+                #else:
+                #    #print(gen_cons, truth_cons, '-')
                 total += 1
 
         return match / total

@@ -546,7 +546,7 @@ class KvretReader(_ReaderBase):
             if lm1 == lm2 and lm1 not in prev_user_input and v not in prev_user_input:
                 response = clean_replace(response, response[start_idx:end_idx], k + '_SLOT')
                 reqs.add(k)
-        return response,reqs
+        return response, reqs
 
     def _clean_constraint_dict(self, constraint_dict, intent, prefer='short'):
         """
@@ -659,7 +659,7 @@ class KvretReader(_ReaderBase):
                         filter(lambda x: dial_turn['data']['requested'][x], dial_turn['data']['requested'].keys()))
                     requestable = {
                         'weather': ['weather_attribute'],
-                        'navigate': ['poi', 'traffic', 'address', 'distance'],
+                        'navigate': ['poi', 'traffic_info', 'address', 'distance'],
                         'schedule': ['date', 'time', 'party', 'agenda', 'room']
                     }
                     requests = sorted(list(dataset_requested.intersection(reqs)))
@@ -725,18 +725,36 @@ class KvretReader(_ReaderBase):
 
     def db_degree(self, constraints, items):
         cnt = 0
+        constraints = ' '.join(constraints).split(' ; ')
+        constraints = [_.strip() for _ in constraints]
         if items is not None:
             for item in items:
-                item = item.values()
-                flg = True
-                for c in constraints:
-                    itemvaluestr = " ".join(list(item))
-                    if c not in itemvaluestr:
-                        flg = False
-                        break
-                if flg:
+                if self.db_match(constraints, item):
                     cnt += 1
         return cnt
+
+    def db_match(self, constraints, item):
+        constraints = set(constraints)
+        week = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'today']
+        week_cons = constraints.intersection(week)
+        if 'monday' in item and week_cons: # weather intent
+            week_cons = list(week_cons)[0]
+            week_cons = item.get('today','') if week_cons == 'today' else week_cons
+            constraints = constraints.difference(week).difference(['temperature'])
+            daily_weather = item.get(week_cons, {})
+            item_str = daily_weather + ' '+ item.get('location','')
+            for c in constraints:
+                if c not in item_str:
+                    return False
+            return True
+        else:
+            item_str = ' '.join(item.values())
+            for c in constraints:
+                if c not in item_str:
+                    return False
+            return True
+
+
 
     def db_degree_handler(self, z_samples, idx=None, *args, **kwargs):
         control_vec = []

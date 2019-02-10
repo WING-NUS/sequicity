@@ -5,7 +5,7 @@ from config import global_config as cfg
 from reader import CamRest676Reader, get_glove_matrix
 from reader import KvretReader
 from tsd_net import TSD, cuda_, nan
-from torch.optim import Adam
+from torch.optim import Adam, RMSprop
 from torch.autograd import Variable
 from reader import pad_sequences
 import argparse, time
@@ -40,9 +40,11 @@ class Model:
                                eos_token_idx=self.reader.vocab.encode('EOS_M'),
                                vocab=self.reader.vocab,
                                teacher_force=cfg.teacher_force,
-                               degree_size=cfg.degree_size)
+                               degree_size=cfg.degree_size,
+                               reader=self.reader)
         self.EV = evaluator_dict[dataset] # evaluator class
         if cfg.cuda: self.m = self.m.cuda()
+        self.optim = Adam(lr=cfg.lr, params=filter(lambda x: x.requires_grad, self.m.parameters()),weight_decay=5e-5)
         self.base_epoch = -1
 
     def _convert_batch(self, py_batch, prev_z_py=None):
@@ -109,7 +111,7 @@ class Model:
             sup_loss = 0
             sup_cnt = 0
             data_iterator = self.reader.mini_batch_iterator('train')
-            optim = Adam(lr=lr, params=filter(lambda x: x.requires_grad, self.m.parameters()),weight_decay=1e-5)
+            optim = self.optim
             for iter_num, dial_batch in enumerate(data_iterator):
                 turn_states = {}
                 prev_z = None
@@ -150,7 +152,7 @@ class Model:
             logging.info('validation loss in epoch %d sup:%f unsup:%f' % (epoch, valid_sup_loss, valid_unsup_loss))
             logging.info('time for epoch %d: %f' % (epoch, time.time()-sw))
             valid_loss = valid_sup_loss + valid_unsup_loss
-
+            self.save_model(epoch)
             if valid_loss <= prev_min_loss:
                 self.save_model(epoch)
                 prev_min_loss = valid_loss
@@ -159,8 +161,10 @@ class Model:
                 lr *= cfg.lr_decay
                 if not early_stop_count:
                     break
+                self.optim = Adam(lr=lr, params=filter(lambda x: x.requires_grad, self.m.parameters()),
+                                  weight_decay=5e-5)
                 logging.info('early stop countdown %d, learning rate %f' % (early_stop_count, lr))
-
+                
     def eval(self, data='test'):
         self.m.eval()
         self.reader.result_file = None
@@ -176,8 +180,8 @@ class Model:
                 m_idx, z_idx, turn_states = self.m(mode=mode, u_input=u_input, u_len=u_len, z_input=z_input,
                                                    m_input=m_input,
                                                    degree_input=degree_input, u_input_np=u_input_np,
-                                                   m_input_np=m_input_np,
-                                                   m_len=m_len, turn_states=turn_states,**kw_ret)
+                                                   m_input_np=m_input_np, m_len=m_len, turn_states=turn_states,
+                                                   dial_id=turn_batch['dial_id'], **kw_ret)
                 self.reader.wrap_result(turn_batch, m_idx, z_idx, prev_z=prev_z)
                 prev_z = z_idx
         ev = self.EV(result_path=cfg.result_path)
@@ -217,6 +221,7 @@ class Model:
 
     def reinforce_tune(self):
         lr = cfg.lr
+        self.optim = Adam(lr=cfg.lr, params=filter(lambda x: x.requires_grad, self.m.parameters()))
         prev_min_loss, early_stop_count = 1 << 30, cfg.early_stop_count
         for epoch in range(self.base_epoch + cfg.rl_epoch_num + 1):
             mode = 'rl'
@@ -224,7 +229,7 @@ class Model:
                 continue
             epoch_loss, cnt = 0,0
             data_iterator = self.reader.mini_batch_iterator('train')
-            optim = Adam(lr=lr, params=filter(lambda x: x.requires_grad, self.m.parameters()), weight_decay=1e-5)
+            optim = self.optim #Adam(lr=lr, params=filter(lambda x: x.requires_grad, self.m.parameters()), weight_decay=0)
             for iter_num, dial_batch in enumerate(data_iterator):
                 turn_states = {}
                 prev_z = None
@@ -239,10 +244,11 @@ class Model:
                                 u_input_np=u_input_np,
                                 m_input_np=m_input_np,
                                 turn_states=turn_states,
+                                dial_id=turn_batch['dial_id'],
                                 u_len=u_len, m_len=m_len, mode=mode, **kw_ret)
 
                     if loss_rl is not None:
-                        loss = loss_rl
+                        loss = loss_rl #+ loss_mle * 0.1
                         loss.backward()
                         grad = torch.nn.utils.clip_grad_norm(self.m.parameters(), 2.0)
                         optim.step()
@@ -259,10 +265,10 @@ class Model:
             logging.info('validation loss in epoch %d sup:%f unsup:%f' % (epoch, valid_sup_loss, valid_unsup_loss))
             valid_loss = valid_sup_loss + valid_unsup_loss
 
-            self.save_model(epoch)
+            #self.save_model(epoch)
 
             if valid_loss <= prev_min_loss:
-                #self.save_model(epoch)
+                self.save_model(epoch)
                 prev_min_loss = valid_loss
             else:
                 early_stop_count -= 1
@@ -271,9 +277,11 @@ class Model:
                     break
                 logging.info('early stop countdown %d, learning rate %f' % (early_stop_count, lr))
 
-    def save_model(self, epoch, path=None):
+    def save_model(self, epoch, path=None, critical=False):
         if not path:
             path = cfg.model_path
+        if critical:
+            path += '.final'
         all_state = {'lstd': self.m.state_dict(),
                      'config': cfg.__dict__,
                      'epoch': epoch}
@@ -322,6 +330,7 @@ def main():
     args = parser.parse_args()
 
     cfg.init_handler(args.model)
+    cfg.dataset = args.model.split('-')[-1]
 
     if args.cfg:
         for pair in args.cfg:
@@ -335,10 +344,10 @@ def main():
                 v = dtype(v)
             setattr(cfg, k, v)
 
-    logging.debug(str(cfg))
+    logging.info(str(cfg))
     if cfg.cuda:
         torch.cuda.set_device(cfg.cuda_device)
-        logging.debug('Device: {}'.format(torch.cuda.current_device()))
+        logging.info('Device: {}'.format(torch.cuda.current_device()))
     cfg.mode = args.mode
 
     torch.manual_seed(cfg.seed)

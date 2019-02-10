@@ -7,11 +7,12 @@ class _Config:
         self._init_logging_handler()
         self.cuda_device = 0        
         self.eos_m_token = 'EOS_M'       
-        self.beam_len_bonus = 0.5
+        self.beam_len_bonus = 0.6
 
         self.mode = 'unknown'
         self.m = 'TSD'
         self.prev_z_method = 'none'
+        self.dataset = 'unknown'
 
         self.seed = 0
   
@@ -42,7 +43,7 @@ class _Config:
         self.layer_num = 1
         self.dropout_rate = 0.5
         self.epoch_num = 100 # triggered by early stop
-        self.rl_epoch_num = 2
+        self.rl_epoch_num = 1
         self.cuda = False
         self.spv_proportion = 100
         self.max_ts = 40
@@ -54,6 +55,7 @@ class _Config:
         self.beam_search = False
         self.beam_size = 10
         self.sampling = False
+        self.use_positional_embedding = False
         self.unfrz_attn_epoch = 0
         self.skip_unsup = False
         self.truncated = False
@@ -80,6 +82,7 @@ class _Config:
         self.layer_num = 1
         self.dropout_rate = 0.5
         self.epoch_num = 100
+        self.rl_epoch_num = 2
         self.cuda = False
         self.spv_proportion = 100
         self.alpha = 0.0
@@ -92,11 +95,11 @@ class _Config:
         self.beam_search = False
         self.beam_size = 10
         self.sampling = False
+        self.use_positional_embedding = False
         self.unfrz_attn_epoch = 0
         self.skip_unsup = False
         self.truncated = False
         self.pretrain = False
-        self.oov_proportion = 100
 
     def __str__(self):
         s = ''
@@ -111,7 +114,7 @@ class _Config:
         file_handler = logging.FileHandler('./log/log_{}.txt'.format(current_time))
         logging.basicConfig(handlers=[stderr_handler, file_handler])
         logger = logging.getLogger()
-        logger.setLevel(logging.DEBUG)
+        logger.setLevel(logging.INFO)
 
 global_config = _Config()
 

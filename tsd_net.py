@@ -12,6 +12,7 @@ import copy, random, time, logging
 from torch.distributions import Categorical
 from reader import pad_sequences
 
+
 def cuda_(var):
     return var.cuda() if cfg.cuda else var
 
@@ -24,6 +25,7 @@ def nan(v):
     if type(v) is float:
         return v == float('nan')
     return np.isnan(np.sum(v.data.cpu().numpy()))
+
 
 def get_sparse_input_aug(x_input_np):
     """
@@ -48,11 +50,13 @@ def get_sparse_input_aug(x_input_np):
     result = torch.from_numpy(result_np).float()
     return result
 
+
 def init_gru(gru):
     gru.reset_parameters()
     for _, hh, _, _ in gru.all_weights:
         for i in range(0, hh.size(0), gru.hidden_size):
-            torch.nn.init.orthogonal(hh[i:i+gru.hidden_size],gain=1)
+            torch.nn.init.orthogonal(hh[i:i + gru.hidden_size], gain=1)
+
 
 class Attn(nn.Module):
     def __init__(self, hidden_size):
@@ -63,10 +67,27 @@ class Attn(nn.Module):
         stdv = 1. / math.sqrt(self.v.size(0))
         self.v.data.normal_(mean=0, std=stdv)
 
-    def forward(self, hidden, encoder_outputs, normalize=True):
+    def forward(self, hidden, encoder_outputs, mask=False, inp_seqs=None, stop_tok=None, normalize=True):
         encoder_outputs = encoder_outputs.transpose(0, 1)  # [B,T,H]
         attn_energies = self.score(hidden, encoder_outputs)
-        normalized_energy = F.softmax(attn_energies, dim=2)  # [B,1,T]
+        if True or not mask:
+            normalized_energy = F.softmax(attn_energies, dim=2)  # [B,1,T]
+        else:
+            mask_idx = []
+            # inp_seqs: ndarray of [T,B]
+            # inp_seqs = inp_seqs.cpu().numpy()
+            for b in range(inp_seqs.shape[1]):
+                for t in range(inp_seqs.shape[0] + 1):
+                    if t == inp_seqs.shape[0] or inp_seqs[t, b] in stop_tok:
+                        mask_idx.append(t)
+                        break
+            mask = []
+            for mask_len in mask_idx:
+                mask.append([1.] * mask_len + [0.] * (inp_seqs.shape[0] - mask_len))
+            mask = cuda_(Variable(torch.FloatTensor(mask)))  # [B,T]
+            attn_energies = attn_energies * mask.unsqueeze(1)
+            normalized_energy = F.softmax(attn_energies, dim=2)  # [B,1,T]
+
         context = torch.bmm(normalized_energy, encoder_outputs)  # [B,1,H]
         return context.transpose(0, 1)  # [1,B,H]
 
@@ -79,6 +100,7 @@ class Attn(nn.Module):
         energy = torch.bmm(v, energy)  # [B,1,T]
         return energy
 
+
 class SimpleDynamicEncoder(nn.Module):
     def __init__(self, input_size, embed_size, hidden_size, n_layers, dropout):
         super().__init__()
@@ -90,7 +112,7 @@ class SimpleDynamicEncoder(nn.Module):
         self.embedding = nn.Embedding(input_size, embed_size)
         self.gru = nn.GRU(embed_size, hidden_size, n_layers, dropout=self.dropout, bidirectional=True)
         init_gru(self.gru)
-            
+
     def forward(self, input_seqs, input_lens, hidden=None):
         """
         forward procedure. No need for inputs to be sorted
@@ -118,37 +140,60 @@ class SimpleDynamicEncoder(nn.Module):
 
 
 class BSpanDecoder(nn.Module):
-    def __init__(self, embed_size, hidden_size, vocab_size, dropout_rate):
+    def __init__(self, embed_size, hidden_size, vocab_size, dropout_rate, vocab):
         super().__init__()
+        self.emb = nn.Embedding(vocab_size, embed_size)
+        if cfg.use_positional_embedding:
+            self.positional_embedding = nn.Embedding(cfg.max_ts + 1, embed_size)
+            init_pos_emb = self.position_encoding_init(cfg.max_ts + 1, embed_size)
+            self.positional_embedding.weight.data = init_pos_emb
         self.gru = nn.GRU(hidden_size + embed_size, hidden_size, dropout=dropout_rate)
         self.proj = nn.Linear(hidden_size * 2, vocab_size)
-        self.emb = nn.Embedding(vocab_size, embed_size)
+
         self.attn_u = Attn(hidden_size)
         self.proj_copy1 = nn.Linear(hidden_size, hidden_size)
         self.proj_copy2 = nn.Linear(hidden_size, hidden_size)
         self.dropout_rate = dropout_rate
-        init_gru(self.gru)
+
         self.inp_dropout = nn.Dropout(self.dropout_rate)
 
-    def forward(self, u_enc_out, z_tm1, last_hidden, u_input_np, pv_z_enc_out, prev_z_input_np, u_emb, pv_z_emb):
+        init_gru(self.gru)
+        self.vocab = vocab
+
+    def position_encoding_init(self, n_position, d_pos_vec):
+        position_enc = np.array([[pos / np.power(10000, 2 * (j // 2) / d_pos_vec) for j in range(d_pos_vec)]
+                                 if pos != 0 else np.zeros(d_pos_vec) for pos in range(n_position)])
+
+        position_enc[1:, 0::2] = np.sin(position_enc[1:, 0::2])  # dim 2i
+        position_enc[1:, 1::2] = np.cos(position_enc[1:, 1::2])  # dim 2i+1
+        return torch.from_numpy(position_enc).type(torch.FloatTensor)
+
+    def forward(self, u_enc_out, z_tm1, last_hidden, u_input_np, pv_z_enc_out, prev_z_input_np, u_emb, pv_z_emb,
+                position):
 
         sparse_u_input = Variable(get_sparse_input_aug(u_input_np), requires_grad=False)
 
         if pv_z_enc_out is not None:
-            context = self.attn_u(last_hidden, torch.cat([pv_z_enc_out, u_enc_out], dim=0))
+            context = self.attn_u(last_hidden, torch.cat([pv_z_enc_out, u_enc_out], dim=0), mask=True,
+                                  inp_seqs=np.concatenate([prev_z_input_np, u_input_np], 0),
+                                  stop_tok=[self.vocab.encode('EOS_M')])
         else:
-            context = self.attn_u(last_hidden, u_enc_out)
+            context = self.attn_u(last_hidden, u_enc_out, mask=True, inp_seqs=u_input_np,
+                                  stop_tok=[self.vocab.encode('EOS_M')])
         embed_z = self.emb(z_tm1)
-        #embed_z = F.dropout(embed_z, self.dropout_rate)
-        #embed_z = self.inp_dropout(embed_z)
+        # embed_z = self.inp_dropout(embed_z)
+
+        if cfg.use_positional_embedding:  # defaulty not used
+            position_label = [position] * u_enc_out.size(1)  # [B]
+            position_label = cuda_(Variable(torch.LongTensor(position_label))).view(1, -1)  # [1,B]
+            pos_emb = self.positional_embedding(position_label)
+            embed_z = embed_z + pos_emb
 
         gru_in = torch.cat([embed_z, context], 2)
         gru_out, last_hidden = self.gru(gru_in, last_hidden)
-        #gru_out = F.dropout(gru_out, self.dropout_rate)
-        #gru_out = self.inp_dropout(gru_out)
+        # gru_out = self.inp_dropout(gru_out)
         gen_score = self.proj(torch.cat([gru_out, context], 2)).squeeze(0)
-        #gen_score = F.dropout(gen_score, self.dropout_rate)
-        #gen_score = self.inp_dropout(gen_score)
+        # gen_score = self.inp_dropout(gen_score)
         u_copy_score = F.tanh(self.proj_copy1(u_enc_out.transpose(0, 1)))  # [B,T,H]
         # stable version of copynet
         u_copy_score = torch.matmul(u_copy_score, gru_out.squeeze(0).unsqueeze(2)).squeeze(2)
@@ -159,8 +204,7 @@ class BSpanDecoder(nn.Module):
             1) + u_copy_score_max  # [B,V]
         u_copy_score = cuda_(u_copy_score)
         if pv_z_enc_out is None:
-            #u_copy_score = F.dropout(u_copy_score, self.dropout_rate)
-            #u_copy_score = self.inp_dropout(u_copy_score)
+            # u_copy_score = self.inp_dropout(u_copy_score)
             scores = F.softmax(torch.cat([gen_score, u_copy_score], dim=1), dim=1)
             gen_score, u_copy_score = scores[:, :cfg.vocab_size], \
                                       scores[:, cfg.vocab_size:]
@@ -202,7 +246,8 @@ class ResponseDecoder(nn.Module):
         self.vocab = vocab
 
     def get_sparse_selective_input(self, x_input_np):
-        result = np.zeros((x_input_np.shape[0], x_input_np.shape[1], cfg.vocab_size + x_input_np.shape[0]), dtype=np.float32)
+        result = np.zeros((x_input_np.shape[0], x_input_np.shape[1], cfg.vocab_size + x_input_np.shape[0]),
+                          dtype=np.float32)
         result.fill(1e-10)
         reqs = ['address', 'phone', 'postcode', 'pricerange', 'area']
         for t in range(x_input_np.shape[0] - 1):
@@ -214,9 +259,9 @@ class ResponseDecoder(nn.Module):
                     result[t + 1][b][slot] = 1.0
                 else:
                     if w == 2 or w >= cfg.vocab_size:
-                        result[t+1][b][cfg.vocab_size + t] = 5.0
+                        result[t + 1][b][cfg.vocab_size + t] = 5.0
                     else:
-                        result[t+1][b][w] = 1.0
+                        result[t + 1][b][w] = 1.0
         result_np = result.transpose((1, 0, 2))
         result = torch.from_numpy(result_np).float()
         return result
@@ -225,8 +270,10 @@ class ResponseDecoder(nn.Module):
         sparse_z_input = Variable(self.get_sparse_selective_input(z_input_np), requires_grad=False)
 
         m_embed = self.emb(m_t_input)
-        z_context = self.attn_z(last_hidden, z_enc_out)
-        u_context = self.attn_u(last_hidden, u_enc_out)
+        z_context = self.attn_z(last_hidden, z_enc_out, mask=True, stop_tok=[self.vocab.encode('EOS_Z2')],
+                                inp_seqs=z_input_np)
+        u_context = self.attn_u(last_hidden, u_enc_out, mask=True, stop_tok=[self.vocab.encode('EOS_M')],
+                                inp_seqs=u_input_np)
         gru_in = torch.cat([m_embed, u_context, z_context, degree_input.unsqueeze(0)], dim=2)
         gru_out, last_hidden = self.gru(gru_in, last_hidden)
         gen_score = self.proj(torch.cat([z_context, u_context, gru_out], 2)).squeeze(0)
@@ -252,14 +299,14 @@ class TSD(nn.Module):
                  max_ts, beam_search=False, teacher_force=100, **kwargs):
         super().__init__()
         self.vocab = kwargs['vocab']
-
+        self.reader = kwargs['reader']
         self.emb = nn.Embedding(vocab_size, embed_size)
         self.dec_gru = nn.GRU(degree_size + embed_size + hidden_size * 2, hidden_size, dropout=dropout_rate)
         self.proj = nn.Linear(hidden_size * 3, vocab_size)
         self.u_encoder = SimpleDynamicEncoder(vocab_size, embed_size, hidden_size, layer_num, dropout_rate)
-        self.z_decoder = BSpanDecoder(embed_size, hidden_size, vocab_size, dropout_rate)
+        self.z_decoder = BSpanDecoder(embed_size, hidden_size, vocab_size, dropout_rate, self.vocab)
         self.m_decoder = ResponseDecoder(embed_size, hidden_size, vocab_size, degree_size, dropout_rate,
-                                               self.dec_gru, self.proj, self.emb, self.vocab)
+                                         self.dec_gru, self.proj, self.emb, self.vocab)
         self.embed_size = embed_size
 
         self.z_length = z_length
@@ -341,17 +388,17 @@ class TSD(nn.Module):
                     self.z_decoder(u_enc_out=u_enc_out, u_input_np=u_input_np,
                                    z_tm1=z_tm1, last_hidden=last_hidden,
                                    pv_z_enc_out=pv_z_enc_out, prev_z_input_np=prev_z_input_np,
-                                   u_emb=u_emb, pv_z_emb=pv_z_emb)
+                                   u_emb=u_emb, pv_z_emb=pv_z_emb, position=t)
                 pz_proba.append(proba)
                 pz_dec_outs.append(pz_dec_out)
                 z_np = z_tm1.view(-1).cpu().data.numpy()
                 for i in range(batch_size):
                     if z_np[i] == self.vocab.encode('EOS_Z2'):
-                        hiddens[i] = last_hidden[:,i,:]
+                        hiddens[i] = last_hidden[:, i, :]
                 z_tm1 = z_input[t].view(1, -1)
             for i in range(batch_size):
                 if hiddens[i] is None:
-                    hiddens[i] = last_hidden[:,i,:]
+                    hiddens[i] = last_hidden[:, i, :]
             last_hidden = torch.stack(hiddens, dim=1)
 
             z_input_np = z_input.cpu().data.numpy()
@@ -361,7 +408,7 @@ class TSD(nn.Module):
             # P(m|z,u)
             pm_dec_proba, m_dec_outs = [], []
             m_length = m_input.size(0)  # Tm
-            #last_hidden = u_enc_hidden[:-1]
+            # last_hidden = u_enc_hidden[:-1]
             for t in range(m_length):
                 teacher_forcing = toss_(self.teacher_force)
                 proba, last_hidden, dec_out = self.m_decoder(pz_dec_outs, u_enc_out, u_input_np, m_tm1,
@@ -377,11 +424,13 @@ class TSD(nn.Module):
             pm_dec_proba = torch.stack(pm_dec_proba, dim=0)  # [T,B,V]
             return pz_proba, pm_dec_proba, None
         else:
-            pz_dec_outs, bspan_index,last_hidden = self.bspan_decoder(u_enc_out, z_tm1, last_hidden, u_input_np,
-                                                          pv_z_enc_out=pv_z_enc_out, prev_z_input_np=prev_z_input_np,
-                                                          u_emb=u_emb, pv_z_emb=pv_z_emb)
+            pz_dec_outs, bspan_index, last_hidden = self.bspan_decoder(u_enc_out, z_tm1, last_hidden, u_input_np,
+                                                                       pv_z_enc_out=pv_z_enc_out,
+                                                                       prev_z_input_np=prev_z_input_np,
+                                                                       u_emb=u_emb, pv_z_emb=pv_z_emb)
             pz_dec_outs = torch.cat(pz_dec_outs, dim=0)
-
+            degree_input = self.reader.db_degree_handler(bspan_index, kwargs['dial_id'])
+            degree_input = cuda_(Variable(torch.from_numpy(degree_input).float()))
             if mode == 'test':
                 if not self.beam_search:
                     m_output_index = self.greedy_decode(pz_dec_outs, u_enc_out, m_tm1, u_input_np, last_hidden,
@@ -406,7 +455,7 @@ class TSD(nn.Module):
             pz_dec_out, last_hidden, proba = \
                 self.z_decoder(u_enc_out=u_enc_out, u_input_np=u_input_np,
                                z_tm1=z_tm1, last_hidden=last_hidden, pv_z_enc_out=pv_z_enc_out,
-                               prev_z_input_np=prev_z_input_np, u_emb=u_emb, pv_z_emb=pv_z_emb)
+                               prev_z_input_np=prev_z_input_np, u_emb=u_emb, pv_z_emb=pv_z_emb, position=t)
             pz_proba.append(proba)
             pz_dec_outs.append(pz_dec_out)
             z_proba, z_index = torch.topk(proba, 1)  # [B,1]
@@ -507,7 +556,8 @@ class TSD(nn.Module):
                 mt_proba, mt_index = torch.topk(proba, self.beam_size - dead_k)  # [1,K]
                 for new_k in range(self.beam_size - dead_k):
                     score_incre = soft_score_incre(mt_proba[0][new_k].data[0], t) + score_bonus(state,
-                                                                                                mt_index[0][new_k].data[0],bspan_index)
+                                                                                                mt_index[0][new_k].data[
+                                                                                                    0], bspan_index)
                     if len(new_states) >= self.beam_size - dead_k and state.score + score_incre < new_states[-1].score:
                         break
                     decoded_t = mt_index[0][new_k]
@@ -570,8 +620,24 @@ class TSD(nn.Module):
 
     # REINFORCEMENT fine-tuning with MC
 
+    def possible_reqs(self):
+        if cfg.dataset == 'camrest':
+            return ['address', 'phone', 'postcode', 'pricerange', 'area']
+        elif cfg.dataset == 'kvret':
+            req_by_intent = {
+                'weather': ['weather_attribute'],
+                'navigate': ['poi', 'traffic_info', 'address', 'distance'],
+                'schedule': ['event', 'date', 'time', 'party', 'agenda', 'room']
+            }
+            reqs = []
+            for value in req_by_intent.values():
+                reqs.extend(value)
+            return reqs
+        else:
+            raise ValueError('unknown dataset')
+
     def get_req_slots(self, bspan_index):
-        reqs = ['address', 'phone', 'postcode', 'pricerange', 'area']
+        reqs = self.possible_reqs()
         reqs = set(self.vocab.sentence_decode(bspan_index).split()).intersection(reqs)
         return [_ + '_SLOT' for _ in reqs]
 
@@ -584,14 +650,12 @@ class TSD(nn.Module):
         :return:
         """
         req_slots = self.get_req_slots(bspan_index)
-        all_reqs = ['address', 'phone', 'postcode', 'pricerange', 'area']
-        all_reqs = [_ + '_SLOT' for _ in all_reqs]
 
         m_tm1 = self.vocab.decode(m_tm1[0])
         finished = m_tm1 == 'EOS_M'
         decoded = [_.view(-1)[0] for _ in decoded]
         decoded_sentence = self.vocab.sentence_decode(decoded, cfg.eos_m_token).split()
-        reward = 0.0 # -0.1
+        reward = -0.01 if cfg.dataset == 'camrest' else 0
         '''
         if not finished:
             if m_tm1 in req_slots:
@@ -601,12 +665,9 @@ class TSD(nn.Module):
         # some modification for reward function.
         if m_tm1 in req_slots:
             if decoded_sentence and m_tm1 not in decoded_sentence[:-1]:
-                reward += 1.5
+                reward += 1.0
             else:
-                reward -= 1.0 # repeat
-        elif m_tm1 in all_reqs:
-            if decoded_sentence and m_tm1 not in decoded_sentence[:-1]:
-                reward += 0.5
+                reward -= 1.0  if cfg.dataset == 'camrest' else 0 # repeat
         return reward, finished
 
     def sampling_decode(self, pz_dec_outs, u_enc_out, m_tm1, u_input_np, last_hidden, degree_input, bspan_index):
@@ -620,7 +681,8 @@ class TSD(nn.Module):
             if not self.get_req_slots(bspan_index[i]):
                 continue
             for j in range(sample_num):
-                loss = self.sampling_decode_single(pz_dec_out_s, u_enc_out_s, m_tm1_s, u_input_np[:, i].reshape((-1, 1)),
+                loss = self.sampling_decode_single(pz_dec_out_s, u_enc_out_s, m_tm1_s,
+                                                   u_input_np[:, i].reshape((-1, 1)),
                                                    last_hidden_s, degree_input_s, bspan_index[i])
                 batch_loss.append(loss)
         if not batch_loss:
@@ -669,7 +731,6 @@ class TSD(nn.Module):
             rewards.insert(0, R)
 
         rewards = torch.Tensor(rewards)
-        # update: we notice improved performance without reward normalization
         # rewards = (rewards - rewards.mean()) / (rewards.std() + np.finfo(np.float32).eps)
 
         for log_prob, reward in zip(log_probas, rewards):
