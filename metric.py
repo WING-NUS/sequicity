@@ -217,7 +217,7 @@ class CamRestEvaluator(GenericEvaluator):
         success_f1 = self.success_f1_metric(data, 'success')
         match = self.match_metric(data, 'match', raw_data=raw_data)
         self._print_dict(self.metric_dict)
-        return -success_f1[0]
+        #return -success_f1[0]
 
     def get_entities(self, entity_data):
         for k in entity_data['informable']:
